@@ -277,7 +277,7 @@ function broadcastToRoom(roomId, message) {
         const room = rooms.get(roomId);
         const messageStr = JSON.stringify(message);
         
-        room.users.forEach((userName, client) => {
+        room.users.forEach((userData, client) => {
             if (client.readyState === WebSocket.OPEN) {
                 try {
                     client.send(messageStr);

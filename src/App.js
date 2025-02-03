@@ -105,20 +105,27 @@ const App = () => {
               break;
 
             case 'reaction':
+              console.log('Reaction update received:', data);
               setRoomState(prev => {
                 const updatedMessages = prev.messages.map(msg => {
                   if (msg.id === data.messageId) {
+                    // Create a new reactions object if it doesn't exist
+                    const currentReactions = msg.reactions || {};
+                    
+                    // Create a new reaction type object if it doesn't exist
+                    const currentReactionType = currentReactions[data.reaction] || {};
+                    
                     const updatedReactions = {
-                      ...msg.reactions,
+                      ...currentReactions,
                       [data.reaction]: {
-                        ...msg.reactions?.[data.reaction],
-                        [data.name]: data.status // true for add, false for remove
+                        ...currentReactionType,
+                        [data.name]: data.status
                       }
                     };
 
-                    // Clean up empty reaction objects
+                    // Clean up if the reaction was removed
                     if (!data.status) {
-                      if (Object.keys(updatedReactions[data.reaction]).length === 0) {
+                      if (Object.values(updatedReactions[data.reaction]).every(v => !v)) {
                         delete updatedReactions[data.reaction];
                       }
                     }
@@ -357,7 +364,7 @@ const App = () => {
               {['❤️', '👍', '⭐', '🔥'].map((reaction) => {
                 const reactionUsers = msg.reactions?.[reaction] || {};
                 const reactionCount = Object.values(reactionUsers).filter(Boolean).length;
-                const hasReacted = reactionUsers[userState.name];
+                const hasReacted = Boolean(reactionUsers[userState.name]);
 
                 return (
                   <button
@@ -370,7 +377,10 @@ const App = () => {
                     }`}
                     title={
                       reactionCount > 0
-                        ? `Reacted by: ${Object.keys(reactionUsers).join(', ')}`
+                        ? `Reacted by: ${Object.entries(reactionUsers)
+                            .filter(([_, value]) => value)
+                            .map(([name]) => name)
+                            .join(', ')}`
                         : 'Be the first to react!'
                     }
                   >
