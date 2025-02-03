@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Users, Share2, RefreshCw, Heart, ThumbsUp, Star, Coffee } from 'lucide-react';
+import { Users, Share2, RefreshCw, Heart, ThumbsUp, Star, Coffee, Gamepad2, Dice, Trophy, MessageCircle } from 'lucide-react';
 
 const EMOJIS_BY_CATEGORY = {
   'Mood': ["😊", "😃", "🙂", "😐", "😕", "😢", "😡", "🤔", "😴", "🤩", "😎"],
@@ -7,6 +7,25 @@ const EMOJIS_BY_CATEGORY = {
   'Fun': ["🎮", "🎧", "🎨", "🎭", "🎪", "🎯", "🎲", "🎸", "🎬", "🎪", "🎡"],
   'Food': ["☕", "🍕", "🍔", "🍦", "🍪", "🍫", "🍎", "🥑", "🥤", "🍵", "🍱"],
   'Reactions': ["❤️", "👍", "👏", "🙌", "✨", "🌟", "💯", "🏆", "🎉", "🔥", "💝"]
+};
+
+const GAMES = {
+  'Quick Poll': {
+    icon: '📊',
+    description: 'Create quick yes/no polls or multiple choice questions'
+  },
+  'Word Chain': {
+    icon: '🔤',
+    description: 'Each person adds a word that starts with the last letter of previous word'
+  },
+  'Emoji Story': {
+    icon: '📖',
+    description: 'Create a story using only emojis, others guess the story'
+  },
+  'Team Trivia': {
+    icon: '🎯',
+    description: 'Fun trivia questions for the team'
+  }
 };
 
 const App = () => {
@@ -32,6 +51,13 @@ const App = () => {
     copiedToClipboard: false,
     showEmojiInfo: null,
     theme: localStorage.getItem('theme') || 'light'
+  });
+
+  const [gameState, setGameState] = useState({
+    activeGame: null,
+    gameData: null,
+    myTurn: false,
+    scores: {}
   });
 
   const wsRef = useRef(null);
@@ -145,6 +171,34 @@ const App = () => {
               });
               break;
 
+            case 'gameStart':
+              setGameState(prev => ({
+                ...prev,
+                activeGame: data.gameType,
+                gameData: data.initialData,
+                myTurn: data.firstPlayer === userState.name
+              }));
+              break;
+
+            case 'gameUpdate':
+              setGameState(prev => ({
+                ...prev,
+                gameData: data.gameData,
+                myTurn: data.nextPlayer === userState.name
+              }));
+              break;
+
+            case 'gameEnd':
+              setGameState(prev => ({
+                ...prev,
+                activeGame: null,
+                scores: {
+                  ...prev.scores,
+                  ...data.scores
+                }
+              }));
+              break;
+
             default:
               console.log('Unknown message type:', data.type);
           }
@@ -243,6 +297,29 @@ const App = () => {
       return { ...prev, theme: newTheme };
     });
   }, []);
+
+  const startGame = useCallback((gameType) => {
+    if (wsRef.current) {
+      wsRef.current.send(JSON.stringify({
+        type: 'startGame',
+        roomId: userState.roomId,
+        gameType,
+        initiator: userState.name
+      }));
+    }
+  }, [userState.roomId, userState.name]);
+
+  const handleGameAction = useCallback((action, data) => {
+    if (wsRef.current) {
+      wsRef.current.send(JSON.stringify({
+        type: 'gameAction',
+        roomId: userState.roomId,
+        name: userState.name,
+        action,
+        data
+      }));
+    }
+  }, [userState.roomId, userState.name]);
 
   // UI Components
   const renderJoinForm = () => (
@@ -409,6 +486,179 @@ const App = () => {
     </div>
   );
 
+  const renderGames = () => (
+    <div className="mb-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold dark:text-white flex items-center">
+          <Gamepad2 className="w-5 h-5 mr-2" />
+          Team Activities
+        </h2>
+        {gameState.activeGame && (
+          <button
+            onClick={() => handleGameAction('endGame')}
+            className="text-sm px-3 py-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"
+          >
+            End Game
+          </button>
+        )}
+      </div>
+
+      {!gameState.activeGame ? (
+        <div className="grid grid-cols-2 gap-4">
+          {Object.entries(GAMES).map(([game, { icon, description }]) => (
+            <button
+              key={game}
+              onClick={() => startGame(game)}
+              className="p-4 rounded-lg border-2 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-400 transition-colors text-left"
+            >
+              <div className="flex items-center mb-2">
+                <span className="text-2xl mr-2">{icon}</span>
+                <span className="font-medium dark:text-white">{game}</span>
+              </div>
+              <p className="text-sm text-gray-600 dark:text-gray-400">{description}</p>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-medium dark:text-white">
+              {gameState.activeGame} {GAMES[gameState.activeGame].icon}
+            </h3>
+            <span className={`text-sm px-3 py-1 rounded-full ${
+              gameState.myTurn 
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' 
+                : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+            }`}>
+              {gameState.myTurn ? "Your Turn!" : "Waiting..."}
+            </span>
+          </div>
+
+          {/* Game-specific UI */}
+          {gameState.activeGame === 'Quick Poll' && (
+            <div className="space-y-4">
+              {gameState.myTurn ? (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    placeholder="Enter your question..."
+                    className="w-full p-2 rounded border dark:bg-gray-800 dark:border-gray-600"
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        handleGameAction('submitPoll', { question: e.target.value });
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Press Enter to submit your question
+                  </p>
+                </div>
+              ) : gameState.gameData?.question && (
+                <div className="space-y-3">
+                  <p className="font-medium dark:text-white">{gameState.gameData.question}</p>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => handleGameAction('vote', { vote: 'yes' })}
+                      className="flex-1 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                    >
+                      Yes 👍
+                    </button>
+                    <button
+                      onClick={() => handleGameAction('vote', { vote: 'no' })}
+                      className="flex-1 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                    >
+                      No 👎
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {gameState.activeGame === 'Word Chain' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {gameState.gameData?.words?.map((word, index) => (
+                  <span
+                    key={index}
+                    className="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 rounded"
+                  >
+                    {word}
+                  </span>
+                ))}
+              </div>
+              {gameState.myTurn && (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    placeholder={`Enter a word starting with '${
+                      gameState.gameData?.lastLetter || 'any letter'
+                    }'...`}
+                    className="w-full p-2 rounded border dark:bg-gray-800 dark:border-gray-600"
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        handleGameAction('submitWord', { word: e.target.value });
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {gameState.activeGame === 'Emoji Story' && (
+            <div className="space-y-4">
+              <div className="text-2xl space-x-1">
+                {gameState.gameData?.story?.map((emoji, index) => (
+                  <span key={index}>{emoji}</span>
+                ))}
+              </div>
+              {gameState.myTurn && (
+                <div className="grid grid-cols-8 gap-2">
+                  {EMOJIS_BY_CATEGORY['Mood'].concat(EMOJIS_BY_CATEGORY['Fun']).map((emoji, index) => (
+                    <button
+                      key={index}
+                      onClick={() => handleGameAction('addEmoji', { emoji })}
+                      className="text-2xl p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Scoreboard */}
+      {Object.keys(gameState.scores).length > 0 && (
+        <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+          <h3 className="font-medium mb-2 flex items-center dark:text-white">
+            <Trophy className="w-4 h-4 mr-2" />
+            Scoreboard
+          </h3>
+          <div className="grid grid-cols-2 gap-2">
+            {Object.entries(gameState.scores)
+              .sort(([,a], [,b]) => b - a)
+              .map(([name, score]) => (
+                <div
+                  key={name}
+                  className="flex items-center justify-between p-2 bg-white dark:bg-gray-800 rounded"
+                >
+                  <span className="dark:text-gray-300">{name}</span>
+                  <span className="font-medium dark:text-white">{score}</span>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className={uiState.theme}>
       <div className="min-h-screen bg-gray-100 dark:bg-gray-900 py-8">
@@ -436,6 +686,7 @@ const App = () => {
           {!userState.isJoined ? renderJoinForm() : (
             <>
               {renderRoomHeader()}
+              {renderGames()}
               {renderEmojiGrid()}
               {renderMessageFeed()}
             </>

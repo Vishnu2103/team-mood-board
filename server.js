@@ -29,6 +29,121 @@ const wss = new WebSocket.Server({
 // Store rooms and their data
 const rooms = new Map();
 
+// Game state and helper functions
+const gameStates = new Map();
+
+function initializeGame(roomId, gameType, initiator) {
+    const room = rooms.get(roomId);
+    if (!room) return null;
+
+    const players = Array.from(room.users.values()).map(u => u.name);
+    const gameState = {
+        type: gameType,
+        players,
+        currentPlayerIndex: 0,
+        scores: {},
+        data: {}
+    };
+
+    switch (gameType) {
+        case 'Quick Poll':
+            gameState.data = {
+                question: null,
+                votes: {},
+                voted: new Set()
+            };
+            break;
+        
+        case 'Word Chain':
+            gameState.data = {
+                words: [],
+                lastLetter: null,
+                usedWords: new Set()
+            };
+            break;
+        
+        case 'Emoji Story':
+            gameState.data = {
+                story: [],
+                guesses: [],
+                currentRound: 1
+            };
+            break;
+        
+        case 'Team Trivia':
+            gameState.data = {
+                currentQuestion: null,
+                answers: {},
+                score: {}
+            };
+            break;
+    }
+
+    gameStates.set(roomId, gameState);
+    return gameState;
+}
+
+function getNextPlayer(gameState) {
+    gameState.currentPlayerIndex = (gameState.currentPlayerIndex + 1) % gameState.players.length;
+    return gameState.players[gameState.currentPlayerIndex];
+}
+
+function updateGameState(roomId, action, data, playerName) {
+    const gameState = gameStates.get(roomId);
+    if (!gameState) return null;
+
+    switch (gameState.type) {
+        case 'Quick Poll':
+            if (action === 'submitPoll') {
+                gameState.data.question = data.question;
+                gameState.data.votes = { yes: 0, no: 0 };
+                gameState.data.voted = new Set();
+            } else if (action === 'vote' && !gameState.data.voted.has(playerName)) {
+                gameState.data.votes[data.vote]++;
+                gameState.data.voted.add(playerName);
+                
+                // End poll if everyone has voted
+                if (gameState.data.voted.size === gameState.players.length) {
+                    const totalVotes = gameState.data.votes.yes + gameState.data.votes.no;
+                    gameState.scores[playerName] = (gameState.scores[playerName] || 0) + 1;
+                    return 'end';
+                }
+            }
+            break;
+
+        case 'Word Chain':
+            if (action === 'submitWord') {
+                const word = data.word.toLowerCase();
+                if (!gameState.data.lastLetter || 
+                    word.charAt(0) === gameState.data.lastLetter) {
+                    if (!gameState.data.usedWords.has(word)) {
+                        gameState.data.words.push(word);
+                        gameState.data.usedWords.add(word);
+                        gameState.data.lastLetter = word.charAt(word.length - 1);
+                        gameState.scores[playerName] = (gameState.scores[playerName] || 0) + 1;
+                        return 'continue';
+                    }
+                }
+            }
+            break;
+
+        case 'Emoji Story':
+            if (action === 'addEmoji') {
+                gameState.data.story.push(data.emoji);
+                gameState.scores[playerName] = (gameState.scores[playerName] || 0) + 1;
+                
+                // End story after 10 emojis
+                if (gameState.data.story.length >= 10) {
+                    return 'end';
+                }
+                return 'continue';
+            }
+            break;
+    }
+
+    return 'continue';
+}
+
 // Helper function to get client IP
 function getClientIP(req) {
     const forwardedFor = req.headers['x-forwarded-for'];
@@ -226,6 +341,55 @@ wss.on('connection', (ws, req) => {
                         name: userName,
                         status: true
                     });
+                    break;
+
+                case 'startGame':
+                    if (!userRoom || !rooms.has(userRoom)) {
+                        sendError('Not in a room');
+                        return;
+                    }
+
+                    const newGameState = initializeGame(userRoom, data.gameType, data.initiator);
+                    if (newGameState) {
+                        broadcastToRoom(userRoom, {
+                            type: 'gameStart',
+                            gameType: data.gameType,
+                            initialData: newGameState.data,
+                            firstPlayer: newGameState.players[0]
+                        });
+                    }
+                    break;
+
+                case 'gameAction':
+                    if (!userRoom || !rooms.has(userRoom)) {
+                        sendError('Not in a room');
+                        return;
+                    }
+
+                    const gameState = gameStates.get(userRoom);
+                    if (!gameState) {
+                        sendError('No active game');
+                        return;
+                    }
+
+                    const result = updateGameState(userRoom, data.action, data.data, userName);
+                    
+                    if (result === 'end') {
+                        // Game ended
+                        broadcastToRoom(userRoom, {
+                            type: 'gameEnd',
+                            scores: gameState.scores
+                        });
+                        gameStates.delete(userRoom);
+                    } else if (result === 'continue') {
+                        // Game continues
+                        const nextPlayer = getNextPlayer(gameState);
+                        broadcastToRoom(userRoom, {
+                            type: 'gameUpdate',
+                            gameData: gameState.data,
+                            nextPlayer
+                        });
+                    }
                     break;
 
                 default:
